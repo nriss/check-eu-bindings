@@ -28,7 +28,7 @@ async function main() {
     console.log(`  ${profiles.length} profil(s), ${bindingCount} binding(s)`);
 
     igResults.push({ ig, profiles });
-    const html = renderIgPage(ig, profiles);
+    const html = renderIgPage(ig, profiles, IG_LIST);
     await writeFile(path.join(OUT_DIR, 'ig', `${ig.id}.html`), html);
   }
 
