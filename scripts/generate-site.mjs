@@ -16,13 +16,14 @@ async function main() {
 
   const loader = await createLoader();
   const seen = new Set();
+  const valueSetCache = new Map();
   const igResults = [];
 
   for (const ig of IG_LIST) {
     console.log(`\n=== ${ig.displayName} (${ig.packageName}#${ig.packageVersion}) ===`);
     await loadWithDependencies(loader, ig.packageName, ig.packageVersion, seen, ig.fallbackTgzUrl ?? null);
 
-    const profiles = extractIgProfiles(loader, ig);
+    const profiles = await extractIgProfiles(loader, ig, valueSetCache);
     const bindingCount = profiles.reduce((n, p) => n + p.bindings.length, 0);
     console.log(`  ${profiles.length} profil(s), ${bindingCount} binding(s)`);
 

@@ -126,6 +126,11 @@ export function renderIndexPage(igList, terminologySummary) {
     .join('');
 
   const body = `
+  <h2>IG couverts</h2>
+  <ul>
+    ${igListItems}
+  </ul>
+
   <h2>Vue d'ensemble</h2>
   <p>Terminologies (CodeSystem) référencées par les bindings des profils des IG FHIR HL7 Europe, tous IG confondus.</p>
   <table>
@@ -140,11 +145,6 @@ export function renderIndexPage(igList, terminologySummary) {
       ${rows.join('\n')}
     </tbody>
   </table>
-
-  <h2>IG couverts</h2>
-  <ul>
-    ${igListItems}
-  </ul>
   `;
 
   return layout({ title: 'HL7 Europe — bindings & terminologies', activeHref: 'index', body });
@@ -197,13 +197,14 @@ code {
 }
 .badge {
   display: inline-block;
-  padding: 0.1rem 0.5rem;
+  padding: 0.15rem 0.6rem;
   border-radius: 999px;
   font-size: 0.8em;
-  border: 1px solid var(--border);
+  font-weight: 600;
+  color: #fff;
 }
-.badge-required { background: #fde8e8; }
-.badge-extensible { background: #fff4d6; }
-.badge-preferred { background: #e6f4ea; }
-.badge-example { background: #e8eefd; }
+.badge-required { background: #b3221f; }
+.badge-extensible { background: #a15c00; }
+.badge-preferred { background: #1a7f37; }
+.badge-example { background: #33459e; }
 `;

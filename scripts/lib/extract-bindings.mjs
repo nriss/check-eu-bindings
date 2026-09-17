@@ -2,19 +2,65 @@ function stripVersion(canonical) {
   return canonical.split('|')[0];
 }
 
+// Certains ValueSet référencés par les IG (ex: les ValueSet eHDSI/MyHealth@EU utilisés par HDR,
+// EPS...) ne sont publiés dans aucun package FHIR chargé : ce sont des ValueSet hébergés en direct
+// sur un serveur de terminologie. On tente de les résoudre en dernier recours via ces serveurs.
+const TERMINOLOGY_SERVERS = ['https://tx.hl7europe.eu/r4', 'https://tx.fhir.org/r4'];
+
+async function fetchValueSetFromServers(url) {
+  for (const server of TERMINOLOGY_SERVERS) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const response = await fetch(`${server}/ValueSet?url=${encodeURIComponent(url)}`, {
+        headers: { Accept: 'application/fhir+json' },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        continue;
+      }
+      const bundle = await response.json();
+      const match = bundle.entry?.find((e) => e.resource?.resourceType === 'ValueSet');
+      if (match) {
+        return match.resource;
+      }
+    } catch {
+      // Serveur injoignable ou timeout : on tente le suivant.
+    }
+  }
+  return null;
+}
+
+// Recherche un ValueSet d'abord dans les packages chargés, puis (si absent) sur les serveurs
+// de terminologie de secours. Les résultats (y compris les échecs) sont mis en cache pour tout
+// le run, un même ValueSet pouvant être référencé par de nombreux profils/IG.
+async function findValueSet(loader, url, cache) {
+  if (cache.has(url)) {
+    return cache.get(url);
+  }
+  let valueSet = loader.findResourceJSON(url, { type: ['ValueSet'] }) ?? null;
+  if (!valueSet) {
+    valueSet = await fetchValueSetFromServers(url);
+  }
+  cache.set(url, valueSet);
+  return valueSet;
+}
+
 // Résout récursivement les CodeSystem référencés par un ValueSet. Un ValueSet peut lister
 // des systems directement (compose.include[].system) et/ou importer d'autres ValueSet
 // (compose.include[].valueSet), auquel cas il faut redescendre dans ceux-ci pour trouver
 // les vrais CodeSystem (ex: ValueSet "allergy-intolerance-uv-ips" de l'IPS, composé uniquement
-// d'autres ValueSet). Retourne `null` si le ValueSet lui-même est introuvable, ou si toutes
-// ses inclusions renvoient vers des ValueSet eux-mêmes introuvables (résolution impossible).
-function resolveCodeSystems(loader, valueSetUrl, visited = new Set()) {
+// d'autres ValueSet). Retourne `null` si le ValueSet lui-même est introuvable (localement et sur
+// les serveurs de secours), ou si toutes ses inclusions renvoient vers des ValueSet eux-mêmes
+// introuvables (résolution impossible).
+async function resolveCodeSystems(loader, valueSetUrl, cache, visited = new Set()) {
   if (visited.has(valueSetUrl)) {
     return [];
   }
   visited.add(valueSetUrl);
 
-  const valueSet = loader.findResourceJSON(valueSetUrl, { type: ['ValueSet'] });
+  const valueSet = await findValueSet(loader, valueSetUrl, cache);
   if (!valueSet) {
     return null;
   }
@@ -27,7 +73,7 @@ function resolveCodeSystems(loader, valueSetUrl, visited = new Set()) {
       systems.add(include.system);
     }
     for (const nestedUrl of include.valueSet ?? []) {
-      const nested = resolveCodeSystems(loader, stripVersion(nestedUrl), visited);
+      const nested = await resolveCodeSystems(loader, stripVersion(nestedUrl), cache, visited);
       if (nested === null) {
         anyUnresolved = true;
       } else {
@@ -45,7 +91,7 @@ function resolveCodeSystems(loader, valueSetUrl, visited = new Set()) {
 // Extrait, pour un package IG déjà chargé (lui + ses dépendances), la liste de ses profils
 // et pour chacun les bindings (ElementDefinition.binding) trouvés dans son differential, avec
 // résolution du ValueSet cible et des terminologies (CodeSystem) qu'il référence.
-export function extractIgProfiles(loader, { packageName, packageVersion }) {
+export async function extractIgProfiles(loader, { packageName, packageVersion }, valueSetCache) {
   const scope = `${packageName}|${packageVersion}`;
   const profileInfos = loader.findResourceInfos('*', { type: ['Profile'], scope });
 
@@ -68,8 +114,8 @@ export function extractIgProfiles(loader, { packageName, packageVersion }) {
         continue;
       }
       const valueSetUrl = stripVersion(binding.valueSet);
-      const valueSet = loader.findResourceJSON(valueSetUrl, { type: ['ValueSet'] });
-      const codeSystems = resolveCodeSystems(loader, valueSetUrl);
+      const valueSet = await findValueSet(loader, valueSetUrl, valueSetCache);
+      const codeSystems = await resolveCodeSystems(loader, valueSetUrl, valueSetCache);
 
       bindings.push({
         path: element.path,
