@@ -1,0 +1,14 @@
+{
+  "name": "check-eu-bindings",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Genere un site statique presentant les bindings (ValueSet/terminologies) des IG FHIR HL7 Europe.",
+  "scripts": {
+    "generate": "node scripts/generate-site.mjs"
+  },
+  "dependencies": {
+    "fhir-package-loader": "^2.2.4",
+    "tar": "^7.4.3"
+  }
+}
