@@ -2,8 +2,48 @@ function stripVersion(canonical) {
   return canonical.split('|')[0];
 }
 
+// Résout récursivement les CodeSystem référencés par un ValueSet. Un ValueSet peut lister
+// des systems directement (compose.include[].system) et/ou importer d'autres ValueSet
+// (compose.include[].valueSet), auquel cas il faut redescendre dans ceux-ci pour trouver
+// les vrais CodeSystem (ex: ValueSet "allergy-intolerance-uv-ips" de l'IPS, composé uniquement
+// d'autres ValueSet). Retourne `null` si le ValueSet lui-même est introuvable, ou si toutes
+// ses inclusions renvoient vers des ValueSet eux-mêmes introuvables (résolution impossible).
+function resolveCodeSystems(loader, valueSetUrl, visited = new Set()) {
+  if (visited.has(valueSetUrl)) {
+    return [];
+  }
+  visited.add(valueSetUrl);
+
+  const valueSet = loader.findResourceJSON(valueSetUrl, { type: ['ValueSet'] });
+  if (!valueSet) {
+    return null;
+  }
+
+  const systems = new Set();
+  let anyUnresolved = false;
+
+  for (const include of valueSet.compose?.include ?? []) {
+    if (include.system) {
+      systems.add(include.system);
+    }
+    for (const nestedUrl of include.valueSet ?? []) {
+      const nested = resolveCodeSystems(loader, stripVersion(nestedUrl), visited);
+      if (nested === null) {
+        anyUnresolved = true;
+      } else {
+        nested.forEach((s) => systems.add(s));
+      }
+    }
+  }
+
+  if (systems.size === 0 && anyUnresolved) {
+    return null;
+  }
+  return [...systems];
+}
+
 // Extrait, pour un package IG déjà chargé (lui + ses dépendances), la liste de ses profils
-// et pour chacun les bindings (ElementDefinition.binding) trouvés dans son snapshot, avec
+// et pour chacun les bindings (ElementDefinition.binding) trouvés dans son differential, avec
 // résolution du ValueSet cible et des terminologies (CodeSystem) qu'il référence.
 export function extractIgProfiles(loader, { packageName, packageVersion }) {
   const scope = `${packageName}|${packageVersion}`;
@@ -29,16 +69,14 @@ export function extractIgProfiles(loader, { packageName, packageVersion }) {
       }
       const valueSetUrl = stripVersion(binding.valueSet);
       const valueSet = loader.findResourceJSON(valueSetUrl, { type: ['ValueSet'] });
-      const codeSystems = valueSet
-        ? [...new Set((valueSet.compose?.include ?? []).map((inc) => inc.system).filter(Boolean))]
-        : null;
+      const codeSystems = resolveCodeSystems(loader, valueSetUrl);
 
       bindings.push({
         path: element.path,
         strength: binding.strength ?? null,
         valueSetUrl,
         valueSetName: valueSet?.name ?? valueSet?.title ?? null,
-        codeSystems // null = ValueSet non résolu, [] = résolu mais sans CodeSystem explicite (ex: composé d'un autre ValueSet)
+        codeSystems // null = ValueSet (ou ses ValueSet imbriqués) non résolu, [] = résolu mais sans CodeSystem
       });
     }
 
@@ -49,7 +87,12 @@ export function extractIgProfiles(loader, { packageName, packageVersion }) {
     });
   }
 
-  profiles.sort((a, b) => a.name.localeCompare(b.name));
+  // Profils avec bindings d'abord (ordre alphabétique), profils sans binding à la fin.
+  profiles.sort((a, b) => {
+    if (a.bindings.length === 0 && b.bindings.length > 0) return 1;
+    if (a.bindings.length > 0 && b.bindings.length === 0) return -1;
+    return a.name.localeCompare(b.name);
+  });
   return profiles;
 }
 
