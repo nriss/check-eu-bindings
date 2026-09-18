@@ -102,9 +102,13 @@ async function computeBindings(loader, elements, valueSetCache) {
     const codeSystems = await resolveCodeSystems(loader, valueSetUrl, valueSetCache);
 
     bindings.push({
-      path: element.path,
-      sliceName: element.sliceName ?? null,
-      description: element.short ?? element.definition ?? null,
+      // `id` (plutôt que `path`) inclut le nom de chaque slice traversée (ex:
+      // "AdverseEvent.suspectEntity.causality:assess.assessment"), pas seulement celui de
+      // l'élément final : nécessaire pour distinguer deux éléments qui partagent le même `path`
+      // mais appartiennent à des slices différentes d'un élément parent.
+      path: element.id ?? element.path,
+      short: element.short ?? null,
+      definition: element.definition ?? null,
       strength: binding.strength ?? null,
       valueSetUrl,
       valueSetName: valueSet?.name ?? valueSet?.title ?? null,

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { IG_LIST } from './ig-list.mjs';
 import { createLoader, loadWithDependencies } from './lib/load-package.mjs';
 import { extractIgProfiles, buildTerminologySummary } from './lib/extract-bindings.mjs';
-import { renderIgPage, renderIndexPage, STYLE_CSS } from './lib/render.mjs';
+import { renderIgPage, renderIndexPage, renderAboutPage, STYLE_CSS } from './lib/render.mjs';
 
 const OUT_DIR = path.resolve('_site');
 
@@ -41,6 +41,9 @@ async function main() {
   };
   const indexHtml = renderIndexPage(IG_LIST, terminologySummary);
   await writeFile(path.join(OUT_DIR, 'index.html'), indexHtml);
+
+  const aboutHtml = renderAboutPage(IG_LIST);
+  await writeFile(path.join(OUT_DIR, 'about.html'), aboutHtml);
 
   console.log(`\nSite généré dans ${OUT_DIR}`);
 }

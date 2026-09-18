@@ -10,9 +10,10 @@ function escapeHtml(value) {
 }
 
 function renderNav(igList, activeHref) {
-  const onIndex = activeHref === 'index';
-  const homeHref = onIndex ? 'index.html' : '../index.html';
-  const igHrefPrefix = onIndex ? 'ig/' : '';
+  const atRoot = activeHref === 'index' || activeHref === 'about';
+  const homeHref = atRoot ? 'index.html' : '../index.html';
+  const aboutHref = atRoot ? 'about.html' : '../about.html';
+  const igHrefPrefix = atRoot ? 'ig/' : '';
 
   const options = igList
     .map((ig) => {
@@ -28,10 +29,11 @@ function renderNav(igList, activeHref) {
     <label class="nav-ig-select">
       Aller à un IG :
       <select onchange="if (this.value) { window.location.href = this.value; }">
-        <option value=""${onIndex ? ' selected' : ''}>— Choisir un IG —</option>
+        <option value=""${atRoot ? ' selected' : ''}>— Choisir un IG —</option>
         ${options}
       </select>
     </label>
+    <a class="nav-about" href="${escapeHtml(aboutHref)}">À propos</a>
   </nav>`;
 }
 
@@ -53,17 +55,18 @@ function renderSourceToggle() {
 }
 
 function layout({ title, activeHref, body, igList }) {
+  const atRoot = activeHref === 'index' || activeHref === 'about';
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)}</title>
-<link rel="stylesheet" href="${activeHref === 'index' ? '' : '../'}assets/style.css" />
+<link rel="stylesheet" href="${atRoot ? '' : '../'}assets/style.css" />
 </head>
 <body>
 <header>
-  <h1><a href="${activeHref === 'index' ? '' : '../'}index.html">HL7 Europe — bindings &amp; terminologies</a></h1>
+  <h1><a href="${atRoot ? '' : '../'}index.html">HL7 Europe — bindings &amp; terminologies</a></h1>
   ${renderNav(igList, activeHref)}
 </header>
 <main>
@@ -85,9 +88,11 @@ function renderBindingStrength(strength) {
 }
 
 function renderElementCell(binding) {
-  const label = binding.sliceName ? `${binding.path}:${binding.sliceName}` : binding.path;
-  const title = binding.description ? ` title="${escapeHtml(binding.description)}"` : '';
-  return `<code${title}>${escapeHtml(label)}</code>`;
+  const lines = [];
+  if (binding.short) lines.push(`short : ${binding.short}`);
+  if (binding.definition) lines.push(`description : ${binding.definition}`);
+  const title = lines.length ? ` title="${escapeHtml(lines.join('\n'))}"` : '';
+  return `<code${title}>${escapeHtml(binding.path)}</code>`;
 }
 
 function renderCodeSystems(codeSystems) {
@@ -186,16 +191,7 @@ function renderSummaryRows(igList, terminologySummary) {
 }
 
 export function renderIndexPage(igList, terminologySummary) {
-  const igListItems = igList
-    .map((ig) => `<li><a href="ig/${escapeHtml(ig.id)}.html">${escapeHtml(ig.displayName)}</a></li>`)
-    .join('');
-
   const body = `
-  <h2>IG couverts</h2>
-  <ul>
-    ${igListItems}
-  </ul>
-
   <h2>Vue d'ensemble</h2>
   <p>Terminologies (CodeSystem) référencées par les bindings des profils des IG FHIR HL7 Europe, tous IG confondus.</p>
   ${renderSourceToggle()}
@@ -219,6 +215,53 @@ export function renderIndexPage(igList, terminologySummary) {
   `;
 
   return layout({ title: 'HL7 Europe — bindings & terminologies', activeHref: 'index', body, igList });
+}
+
+export function renderAboutPage(igList) {
+  const rows = igList
+    .map(
+      (ig) => `<tr>
+      <td><a href="ig/${escapeHtml(ig.id)}.html">${escapeHtml(ig.displayName)}</a></td>
+      <td>${escapeHtml(ig.author)}</td>
+      <td>${escapeHtml(ig.scope)}</td>
+      <td>
+        <a href="${escapeHtml(ig.publicationUrl)}">Publication</a>
+        · <a href="${escapeHtml(ig.githubRepo)}">Repo GitHub</a>
+      </td>
+    </tr>`
+    )
+    .join('\n');
+
+  const body = `
+  <h2>À propos</h2>
+  <p>Ce site est généré automatiquement à partir des packages FHIR publiés des Implementation Guides (IG) HL7 Europe listés ci-dessous. Pour chaque IG, le générateur :</p>
+  <ul>
+    <li>charge le package FHIR publié (et ses dépendances) via <a href="https://github.com/FHIR/fhir-package-loader">fhir-package-loader</a> ;</li>
+    <li>parcourt les profils de l'IG et en extrait les bindings (<code>ElementDefinition.binding</code>), à la fois dans le <em>differential</em> (ce que le profil définit lui-même) et dans le <em>snapshot</em> (vue complète, y compris les éléments hérités) — la case à cocher sur les autres pages permet de basculer entre les deux ;</li>
+    <li>résout, pour chaque binding, le ValueSet cible puis les terminologies (CodeSystem) qu'il référence, y compris quand le ValueSet est composé d'autres ValueSet, ou hébergé hors des packages chargés (via les serveurs de terminologie <a href="https://tx.hl7europe.eu">tx.hl7europe.eu</a> et <a href="https://tx.fhir.org">tx.fhir.org</a> en dernier recours) ;</li>
+    <li>publie le résultat sur GitHub Pages via un workflow GitHub Actions à déclenchement manuel.</li>
+  </ul>
+  <p>Le code source du générateur et le workflow sont dans le repo <a href="https://github.com/nriss/check-eu-bindings">nriss/check-eu-bindings</a>.</p>
+
+  <h2>IG couverts</h2>
+  <div class="table-scroll">
+  <table class="about-table">
+    <thead>
+      <tr>
+        <th>IG</th>
+        <th>Auteur</th>
+        <th>Périmètre</th>
+        <th>Liens</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+    </tbody>
+  </table>
+  </div>
+  `;
+
+  return layout({ title: 'À propos — HL7 Europe bindings & terminologies', activeHref: 'about', body, igList });
 }
 
 export const STYLE_CSS = `
@@ -258,6 +301,10 @@ header h1 a {
 .nav-ig-select select {
   margin-left: 0.4rem;
 }
+.nav-about {
+  margin-left: auto;
+  white-space: nowrap;
+}
 .source-toggle {
   display: block;
   margin: 0.5rem 0 1rem;
@@ -295,6 +342,10 @@ th {
 .summary-table th:nth-child(1), .summary-table td:nth-child(1) { width: 30%; }
 .summary-table th:nth-child(2), .summary-table td:nth-child(2) { width: 10%; }
 .summary-table th:nth-child(3), .summary-table td:nth-child(3) { width: 60%; }
+.about-table th:nth-child(1), .about-table td:nth-child(1) { width: 18%; }
+.about-table th:nth-child(2), .about-table td:nth-child(2) { width: 10%; }
+.about-table th:nth-child(3), .about-table td:nth-child(3) { width: 52%; }
+.about-table th:nth-child(4), .about-table td:nth-child(4) { width: 20%; }
 code {
   font-size: 0.85em;
 }
