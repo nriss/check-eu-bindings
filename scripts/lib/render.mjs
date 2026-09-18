@@ -35,6 +35,23 @@ function renderNav(igList, activeHref) {
   </nav>`;
 }
 
+// Case permettant de basculer, pour toutes les tables de la page, entre les bindings du
+// differential (ce que le profil définit/contraint lui-même) et ceux du snapshot (tous les
+// éléments, y compris hérités de la ressource de base). Purement client-side : les deux jeux
+// de lignes sont générés à la build dans des <tbody data-source="..."> distincts, la checkbox
+// ne fait que basculer leur visibilité.
+function renderSourceToggle() {
+  return `
+  <label class="source-toggle">
+    <input type="checkbox" onchange="
+      document.querySelectorAll('tbody[data-source]').forEach(function (tbody) {
+        tbody.style.display = (tbody.dataset.source === (this.checked ? 'snapshot' : 'differential')) ? '' : 'none';
+      }, this);
+    " />
+    Afficher les bindings du <strong>snapshot</strong> (vue complète, inclut les éléments hérités de la ressource de base) — décoché : bindings du <strong>differential</strong> (ce que le profil définit lui-même)
+  </label>`;
+}
+
 function layout({ title, activeHref, body, igList }) {
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -67,6 +84,12 @@ function renderBindingStrength(strength) {
   return `<span class="badge badge-${escapeHtml(strength)}">${escapeHtml(strength)}</span>`;
 }
 
+function renderElementCell(binding) {
+  const label = binding.sliceName ? `${binding.path}:${binding.sliceName}` : binding.path;
+  const title = binding.description ? ` title="${escapeHtml(binding.description)}"` : '';
+  return `<code${title}>${escapeHtml(label)}</code>`;
+}
+
 function renderCodeSystems(codeSystems) {
   if (codeSystems === null) {
     return '<span class="muted">non résolu</span>';
@@ -79,38 +102,45 @@ function renderCodeSystems(codeSystems) {
     .join('')}</ul>`;
 }
 
-export function renderIgPage(ig, profiles, igList) {
+// Génère les <tr> d'un <tbody> pour une liste de profils déjà triée (pour une source donnée :
+// 'differential' ou 'snapshot').
+function renderBindingRows(profiles, source) {
   const rows = [];
   for (const profile of profiles) {
-    if (profile.bindings.length === 0) {
+    const bindings = profile.bySource[source];
+    if (bindings.length === 0) {
       rows.push(`<tr>
         <td><a href="${escapeHtml(profile.url)}">${escapeHtml(profile.name)}</a></td>
         <td colspan="4" class="muted">Aucun binding</td>
       </tr>`);
       continue;
     }
-    profile.bindings.forEach((binding, index) => {
+    bindings.forEach((binding, index) => {
       rows.push(`<tr>
         ${
           index === 0
-            ? `<td rowspan="${profile.bindings.length}"><a href="${escapeHtml(profile.url)}">${escapeHtml(
+            ? `<td rowspan="${bindings.length}"><a href="${escapeHtml(profile.url)}">${escapeHtml(
                 profile.name
               )}</a></td>`
             : ''
         }
-        <td><code>${escapeHtml(binding.path)}</code></td>
+        <td>${renderElementCell(binding)}</td>
         <td>${renderBindingStrength(binding.strength)}</td>
         <td><a href="${escapeHtml(binding.valueSetUrl)}">${escapeHtml(binding.valueSetName ?? binding.valueSetUrl)}</a></td>
         <td>${renderCodeSystems(binding.codeSystems)}</td>
       </tr>`);
     });
   }
+  return rows.join('\n');
+}
 
+export function renderIgPage(ig, profiles, igList) {
   const body = `
   <h2>${escapeHtml(ig.displayName)}</h2>
   <p><a href="${escapeHtml(ig.publicationUrl)}">Page de publication de l'IG</a> — package <code>${escapeHtml(
     ig.packageName
   )}#${escapeHtml(ig.packageVersion)}</code></p>
+  ${renderSourceToggle()}
   <div class="table-scroll">
   <table class="ig-table">
     <thead>
@@ -122,8 +152,11 @@ export function renderIgPage(ig, profiles, igList) {
         <th>Terminologies (CodeSystem)</th>
       </tr>
     </thead>
-    <tbody>
-      ${rows.join('\n')}
+    <tbody data-source="differential">
+      ${renderBindingRows(profiles.differential, 'differential')}
+    </tbody>
+    <tbody data-source="snapshot" style="display: none;">
+      ${renderBindingRows(profiles.snapshot, 'snapshot')}
     </tbody>
   </table>
   </div>
@@ -132,24 +165,27 @@ export function renderIgPage(ig, profiles, igList) {
   return layout({ title: `${ig.displayName} — bindings HL7 Europe`, activeHref: ig.id, body, igList });
 }
 
-export function renderIndexPage(igList, terminologySummary) {
+function renderSummaryRows(igList, terminologySummary) {
   const igIndex = new Map(igList.map((ig) => [ig.id, ig]));
-
-  const rows = terminologySummary.map(({ system, usages }) => {
-    const igCells = usages
-      .sort((a, b) => (igIndex.get(a.igId)?.displayName ?? '').localeCompare(igIndex.get(b.igId)?.displayName ?? ''))
-      .map(
-        ({ igId, count }) =>
-          `<li><a href="ig/${escapeHtml(igId)}.html">${escapeHtml(igIndex.get(igId)?.displayName ?? igId)}</a> (${count})</li>`
-      )
-      .join('');
-    return `<tr>
+  return terminologySummary
+    .map(({ system, usages }) => {
+      const igCells = usages
+        .sort((a, b) => (igIndex.get(a.igId)?.displayName ?? '').localeCompare(igIndex.get(b.igId)?.displayName ?? ''))
+        .map(
+          ({ igId, count }) =>
+            `<li><a href="ig/${escapeHtml(igId)}.html">${escapeHtml(igIndex.get(igId)?.displayName ?? igId)}</a> (${count})</li>`
+        )
+        .join('');
+      return `<tr>
       <td><code>${escapeHtml(system)}</code></td>
       <td>${usages.length}</td>
       <td><ul class="ig-usages">${igCells}</ul></td>
     </tr>`;
-  });
+    })
+    .join('\n');
+}
 
+export function renderIndexPage(igList, terminologySummary) {
   const igListItems = igList
     .map((ig) => `<li><a href="ig/${escapeHtml(ig.id)}.html">${escapeHtml(ig.displayName)}</a></li>`)
     .join('');
@@ -162,6 +198,7 @@ export function renderIndexPage(igList, terminologySummary) {
 
   <h2>Vue d'ensemble</h2>
   <p>Terminologies (CodeSystem) référencées par les bindings des profils des IG FHIR HL7 Europe, tous IG confondus.</p>
+  ${renderSourceToggle()}
   <div class="table-scroll">
   <table class="summary-table">
     <thead>
@@ -171,8 +208,11 @@ export function renderIndexPage(igList, terminologySummary) {
         <th>Détail par IG (nb de bindings)</th>
       </tr>
     </thead>
-    <tbody>
-      ${rows.join('\n')}
+    <tbody data-source="differential">
+      ${renderSummaryRows(igList, terminologySummary.differential)}
+    </tbody>
+    <tbody data-source="snapshot" style="display: none;">
+      ${renderSummaryRows(igList, terminologySummary.snapshot)}
     </tbody>
   </table>
   </div>
@@ -217,6 +257,14 @@ header h1 a {
 }
 .nav-ig-select select {
   margin-left: 0.4rem;
+}
+.source-toggle {
+  display: block;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9em;
+}
+.source-toggle input {
+  margin-right: 0.4rem;
 }
 .table-scroll {
   overflow-x: auto;

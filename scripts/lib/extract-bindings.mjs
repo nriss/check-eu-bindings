@@ -88,9 +88,48 @@ async function resolveCodeSystems(loader, valueSetUrl, cache, visited = new Set(
   return [...systems];
 }
 
-// Extrait, pour un package IG déjà chargé (lui + ses dépendances), la liste de ses profils
-// et pour chacun les bindings (ElementDefinition.binding) trouvés dans son differential, avec
-// résolution du ValueSet cible et des terminologies (CodeSystem) qu'il référence.
+// Construit la liste des bindings à partir d'une liste d'ElementDefinition (celles d'un
+// differential ou d'un snapshot — même logique dans les deux cas).
+async function computeBindings(loader, elements, valueSetCache) {
+  const bindings = [];
+  for (const element of elements) {
+    const binding = element.binding;
+    if (!binding?.valueSet) {
+      continue;
+    }
+    const valueSetUrl = stripVersion(binding.valueSet);
+    const valueSet = await findValueSet(loader, valueSetUrl, valueSetCache);
+    const codeSystems = await resolveCodeSystems(loader, valueSetUrl, valueSetCache);
+
+    bindings.push({
+      path: element.path,
+      sliceName: element.sliceName ?? null,
+      description: element.short ?? element.definition ?? null,
+      strength: binding.strength ?? null,
+      valueSetUrl,
+      valueSetName: valueSet?.name ?? valueSet?.title ?? null,
+      codeSystems // null = ValueSet (ou ses ValueSet imbriqués) non résolu, [] = résolu mais sans CodeSystem
+    });
+  }
+  return bindings;
+}
+
+// Profils avec bindings d'abord (ordre alphabétique), profils sans binding à la fin.
+function sortProfilesForSource(profiles, source) {
+  return [...profiles].sort((a, b) => {
+    const aCount = a.bySource[source].length;
+    const bCount = b.bySource[source].length;
+    if (aCount === 0 && bCount > 0) return 1;
+    if (aCount > 0 && bCount === 0) return -1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+// Extrait, pour un package IG déjà chargé (lui + ses dépendances), la liste de ses profils et,
+// pour chacun, les bindings (ElementDefinition.binding) trouvés à la fois dans son differential
+// (ce que le profil définit/contraint réellement) et dans son snapshot (tous les éléments, y
+// compris ceux hérités tels quels de la ressource de base), pour permettre de basculer entre les
+// deux vues côté site.
 export async function extractIgProfiles(loader, { packageName, packageVersion }, valueSetCache) {
   const scope = `${packageName}|${packageVersion}`;
   const profileInfos = loader.findResourceInfos('*', { type: ['Profile'], scope });
@@ -103,53 +142,33 @@ export async function extractIgProfiles(loader, { packageName, packageVersion },
       continue;
     }
 
-    // On préfère le differential : il ne contient que les éléments que le profil définit/contraint
-    // réellement (dont les bindings qu'il fixe ou resserre), alors que le snapshot inclut aussi
-    // tous les éléments hérités tels quels de la ressource de base, ce qui noierait le tableau.
-    const elements = sd.differential?.element ?? sd.snapshot?.element ?? [];
-    const bindings = [];
-    for (const element of elements) {
-      const binding = element.binding;
-      if (!binding?.valueSet) {
-        continue;
-      }
-      const valueSetUrl = stripVersion(binding.valueSet);
-      const valueSet = await findValueSet(loader, valueSetUrl, valueSetCache);
-      const codeSystems = await resolveCodeSystems(loader, valueSetUrl, valueSetCache);
-
-      bindings.push({
-        path: element.path,
-        strength: binding.strength ?? null,
-        valueSetUrl,
-        valueSetName: valueSet?.name ?? valueSet?.title ?? null,
-        codeSystems // null = ValueSet (ou ses ValueSet imbriqués) non résolu, [] = résolu mais sans CodeSystem
-      });
-    }
+    const [differential, snapshot] = await Promise.all([
+      computeBindings(loader, sd.differential?.element ?? [], valueSetCache),
+      computeBindings(loader, sd.snapshot?.element ?? [], valueSetCache)
+    ]);
 
     profiles.push({
       name: sd.name ?? sd.id,
       url: sd.url,
-      bindings
+      bySource: { differential, snapshot }
     });
   }
 
-  // Profils avec bindings d'abord (ordre alphabétique), profils sans binding à la fin.
-  profiles.sort((a, b) => {
-    if (a.bindings.length === 0 && b.bindings.length > 0) return 1;
-    if (a.bindings.length > 0 && b.bindings.length === 0) return -1;
-    return a.name.localeCompare(b.name);
-  });
-  return profiles;
+  return {
+    differential: sortProfilesForSource(profiles, 'differential'),
+    snapshot: sortProfilesForSource(profiles, 'snapshot')
+  };
 }
 
 // Agrège, à travers tous les IG, la liste des terminologies (CodeSystem) rencontrées
-// et les IG qui les référencent (pour la page de résumé).
-export function buildTerminologySummary(igResults) {
+// et les IG qui les référencent (pour la page de résumé), pour la source demandée
+// ('differential' ou 'snapshot').
+export function buildTerminologySummary(igResults, source) {
   const bySystem = new Map();
 
   for (const { ig, profiles } of igResults) {
-    for (const profile of profiles) {
-      for (const binding of profile.bindings) {
+    for (const profile of profiles[source]) {
+      for (const binding of profile.bySource[source]) {
         if (!binding.codeSystems) {
           continue;
         }

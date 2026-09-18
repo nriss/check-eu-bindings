@@ -24,15 +24,21 @@ async function main() {
     await loadWithDependencies(loader, ig.packageName, ig.packageVersion, seen, ig.fallbackTgzUrl ?? null);
 
     const profiles = await extractIgProfiles(loader, ig, valueSetCache);
-    const bindingCount = profiles.reduce((n, p) => n + p.bindings.length, 0);
-    console.log(`  ${profiles.length} profil(s), ${bindingCount} binding(s)`);
+    const differentialCount = profiles.differential.reduce((n, p) => n + p.bySource.differential.length, 0);
+    const snapshotCount = profiles.snapshot.reduce((n, p) => n + p.bySource.snapshot.length, 0);
+    console.log(
+      `  ${profiles.differential.length} profil(s) — ${differentialCount} binding(s) (differential), ${snapshotCount} binding(s) (snapshot)`
+    );
 
     igResults.push({ ig, profiles });
     const html = renderIgPage(ig, profiles, IG_LIST);
     await writeFile(path.join(OUT_DIR, 'ig', `${ig.id}.html`), html);
   }
 
-  const terminologySummary = buildTerminologySummary(igResults);
+  const terminologySummary = {
+    differential: buildTerminologySummary(igResults, 'differential'),
+    snapshot: buildTerminologySummary(igResults, 'snapshot')
+  };
   const indexHtml = renderIndexPage(IG_LIST, terminologySummary);
   await writeFile(path.join(OUT_DIR, 'index.html'), indexHtml);
 
